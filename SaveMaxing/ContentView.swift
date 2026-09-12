@@ -1,21 +1,38 @@
-//
-//  ContentView.swift
-//  SaveMaxing
-//
-//  Created by Jorge Acosta on 9/11/26.
-//
-
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var appModel = AppViewModel()
+    @State private var isAdvisorPresented = false
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        TabView {
+            DashboardView(appModel: appModel, isAdvisorPresented: $isAdvisorPresented)
+                .tabItem {
+                    Label("Home", systemImage: "house.fill")
+                }
+
+            GoalsView(appModel: appModel, isAdvisorPresented: $isAdvisorPresented)
+                .tabItem {
+                    Label("Goals", systemImage: "target")
+                }
+
+            PurchaseDecisionView(appModel: appModel)
+                .tabItem {
+                    Label("Buy It", systemImage: "cart.badge.questionmark")
+                }
+
+            InsightsView(appModel: appModel)
+                .tabItem {
+                    Label("Insights", systemImage: "chart.bar.xaxis")
+                }
         }
-        .padding()
+        .tint(.green)
+        .sheet(isPresented: $isAdvisorPresented) {
+            SaveMaxingAdvisorSheet(appModel: appModel)
+        }
+        .task {
+            await appModel.load()
+        }
     }
 }
 
