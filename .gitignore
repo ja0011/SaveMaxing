@@ -1,0 +1,11 @@
+# Secrets — never commit API keys (repo is public!)
+Secrets.swift
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# macOS
+.DS_Store

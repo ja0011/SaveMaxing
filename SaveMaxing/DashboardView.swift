@@ -3,6 +3,7 @@ import SwiftUI
 struct DashboardView: View {
     @ObservedObject var appModel: AppViewModel
     @Binding var isAdvisorPresented: Bool
+    @Binding var selectedTab: Int
 
     private var goal: SavingsGoal { appModel.activeGoal }
     private var categories: [SpendingCategory] { appModel.categories }
@@ -13,11 +14,12 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 18) {
-                    financialCommandCard
-                    activeGoalCard
-                    impactStrip
-                    spendingSection
-                    transactionsSection
+                    accountsSection
+                    if appModel.goals.isEmpty {
+                        startGoalCard
+                    } else {
+                        activeGoalCard
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
@@ -25,7 +27,13 @@ struct DashboardView: View {
             }
             .background(appBackground)
             .navigationTitle("Home")
+            .task {
+                await appModel.loadAnalytics()
+            }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    userSwitcherMenu
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         isAdvisorPresented = true
@@ -37,35 +45,91 @@ struct DashboardView: View {
         }
     }
 
-    private var financialCommandCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Financial Command Center")
-                .font(.headline.weight(.bold))
-
-            HStack(spacing: 10) {
-                MetricPill(title: "Total Balance", value: appModel.totalBalance.formattedCurrency, systemImage: "banknote.fill")
-                MetricPill(title: "Expected Income", value: "+\(appModel.expectedIncome.formattedCurrency)", systemImage: "arrow.down.circle.fill")
-            }
-
-            HStack(spacing: 12) {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .foregroundStyle(.green)
-                    .frame(width: 34, height: 34)
-                    .background(.green.opacity(0.12), in: Circle())
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Projected Balance")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                    Text(appModel.projectedBalance.formattedCurrency)
-                        .font(.title.weight(.black))
+    /// Lets the demo switch between Nessie customers on the fly.
+    private var userSwitcherMenu: some View {
+        Menu {
+            ForEach(appModel.availableUsers) { user in
+                Button {
+                    Task { await appModel.switchUser(to: user.id) }
+                } label: {
+                    if user.id == appModel.user.id {
+                        Label(user.name, systemImage: "checkmark")
+                    } else {
+                        Text(user.name)
+                    }
                 }
-                Spacer()
             }
-            .padding(14)
-            .background(Color(.systemBackground).opacity(0.74), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "person.crop.circle.fill")
+                Text(appModel.user.name.components(separatedBy: " ").first ?? appModel.user.name)
+                    .font(.subheadline.weight(.semibold))
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.bold))
+            }
         }
-        .padding(18)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    /// Chase-style stack: one uniform card per account, plus a matching
+    /// projected-balance card so the whole section lines up evenly.
+    private var accountsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Accounts", systemImage: "building.columns.fill")
+
+            ForEach(appModel.accounts) { account in
+                NavigationLink {
+                    AccountTransactionsView(
+                        account: account,
+                        transactions: combinedTransactions(for: account)
+                    )
+                } label: {
+                    AccountCard(account: account)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// The bank account's own Nessie purchases plus the linked Plaid history for
+    /// that account type, newest first, so tapping an account shows everything.
+    private func combinedTransactions(for account: Account) -> [Transaction] {
+        let own = appModel.transactions.filter { $0.accountName == account.name }
+        let history = appModel.plaidTransactions
+            .filter { $0.accountKind == account.type }
+            .map { $0.asTransaction(accountName: account.name) }
+        return (own + history).sorted { $0.date > $1.date }
+    }
+
+
+    /// Shown on Home when the user has deleted all their goals. Tapping it
+    /// jumps to the Goals tab.
+    private var startGoalCard: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "target")
+                .font(.system(size: 36, weight: .bold))
+                .foregroundStyle(SaveMaxingTheme.brand)
+                .frame(width: 68, height: 68)
+                .background(SaveMaxingTheme.accentSoft, in: Circle())
+
+            Text("Start a goal")
+                .font(.title3.weight(.bold))
+
+            Text("You don't have any goals yet. Tap here to create one.")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(24)
+        .background(
+            SaveMaxingTheme.cardGradient(),
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onTapGesture {
+            selectedTab = 1   // Goals tab
+        }
     }
 
     private var activeGoalCard: some View {
@@ -119,10 +183,24 @@ struct DashboardView: View {
                 MetricPill(title: "Status", value: goal.health.rawValue, systemImage: goal.health.symbolName)
             }
 
-            if let stake = goal.stake {
+            if goal.isFailed {
+                goalOutcomeBanner(
+                    title: "Goal Failed",
+                    systemImage: "xmark.octagon.fill",
+                    tint: .red,
+                    detail: goal.stake.map { "\($0.committedSol.formattedSOL) lost" }
+                )
+            } else if goal.isAchieved {
+                goalOutcomeBanner(
+                    title: "Goal Achieved",
+                    systemImage: "checkmark.seal.fill",
+                    tint: .green,
+                    detail: goal.stake.map { "\($0.committedSol.formattedSOL) returned" }
+                )
+            } else if let stake = goal.stake {
                 StakeStatusBanner(stake: stake)
             } else {
-                Label("No SOL stake attached", systemImage: "lock.open.fill")
+                Label("SOL stake not created yet", systemImage: "lock.open.fill")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .padding(12)
@@ -137,10 +215,29 @@ struct DashboardView: View {
         )
     }
 
+    private func goalOutcomeBanner(title: String, systemImage: String, tint: Color, detail: String?) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(tint)
+            Text(title)
+                .font(.subheadline.weight(.bold))
+            Spacer()
+            if let detail {
+                Text(detail)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(tint)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
     private var impactStrip: some View {
         HStack(spacing: 12) {
-            ImpactTile(title: "Purchases resisted", value: "\(savingsImpact.purchasesResisted)", systemImage: "hand.raised.fill", color: .blue)
-            ImpactTile(title: "Money protected", value: savingsImpact.moneyProtected.formattedCurrency, systemImage: "shield.checkered", color: .green)
+            ImpactTile(title: "Purchases resisted", value: "\(savingsImpact.purchasesResisted)", systemImage: "hand.raised.fill", color: SaveMaxingTheme.info)
+            ImpactTile(title: "Money protected", value: savingsImpact.moneyProtected.formattedCurrency, systemImage: "shield.checkered", color: SaveMaxingTheme.success)
         }
     }
 
@@ -156,14 +253,19 @@ struct DashboardView: View {
         }
     }
 
+    /// Only the five most recent transactions; full history lives on each account card.
+    private var recentTransactions: [Transaction] {
+        Array(transactions.prefix(5))
+    }
+
     private var transactionsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "Recent Transactions", systemImage: "clock.arrow.circlepath")
 
             VStack(spacing: 0) {
-                ForEach(transactions) { transaction in
+                ForEach(recentTransactions) { transaction in
                     TransactionRow(transaction: transaction)
-                    if transaction.id != transactions.last?.id {
+                    if transaction.id != recentTransactions.last?.id {
                         Divider().padding(.leading, 48)
                     }
                 }
@@ -174,7 +276,7 @@ struct DashboardView: View {
     }
 
     private var appBackground: some View {
-        LinearGradient(colors: [Color(.systemBackground), Color.green.opacity(0.08), Color(.systemBackground)], startPoint: .top, endPoint: .bottom)
+        SaveMaxingTheme.background
             .ignoresSafeArea()
     }
 }
@@ -186,7 +288,7 @@ struct StakeStatusBanner: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: stake.state == .stakeConfirmed ? "checkmark.seal.fill" : "lock.fill")
-                    .foregroundStyle(stake.state == .stakeConfirmed ? .green : .orange)
+                    .foregroundStyle(stake.state == .stakeConfirmed ? SaveMaxingTheme.success : SaveMaxingTheme.warning)
                 Text("\(stake.committedSol.formattedSOL) at stake")
                     .font(.subheadline.weight(.bold))
                 Spacer()
@@ -201,9 +303,151 @@ struct StakeStatusBanner: View {
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
+
+            if let outcome = stake.resolutionOutcome, let payoutSignature = stake.payoutSignature {
+                Text("Resolved: \(outcome.rawValue.capitalized) • Payout: \(payoutSignature.shortAddress)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+
+            if let payoutURL = stake.payoutExplorerURL {
+                Link(destination: payoutURL) {
+                    Label("View Payout", systemImage: "arrow.up.right.square.fill")
+                        .font(.caption.weight(.bold))
+                }
+            }
         }
         .padding(12)
         .background(Color(.systemBackground).opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+/// Full transaction history for a single account, pushed from its card.
+struct AccountTransactionsView: View {
+    let account: Account
+    let transactions: [Transaction]
+
+    private var sortedTransactions: [Transaction] {
+        transactions.sorted { $0.date > $1.date }
+    }
+
+    private var displayBalance: Decimal {
+        account.type == .credit ? abs(account.balance) : account.balance
+    }
+
+    var body: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 18) {
+                balanceHeader
+
+                if sortedTransactions.isEmpty {
+                    emptyState
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(sortedTransactions) { transaction in
+                            TransactionRow(transaction: transaction)
+                            if transaction.id != sortedTransactions.last?.id {
+                                Divider().padding(.leading, 48)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 28)
+        }
+        .navigationTitle(account.name)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var balanceHeader: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(displayBalance.formattedCurrency)
+                .font(.title.weight(.semibold))
+            Text(account.type == .credit ? "Current balance" : "Available balance")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(16)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "tray")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+            Text("No transactions on this account yet")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(28)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+/// A Chase-style account card: name top-left, large right-aligned balance,
+/// and an action row under a divider. Fixed height keeps the stack uniform.
+private struct AccountCard: View {
+    static let cardHeight: CGFloat = 148
+
+    let account: Account
+
+    private var subtitle: String {
+        account.type == .credit ? "Current balance" : "Available balance"
+    }
+
+    private var actionTitle: String {
+        account.type == .credit ? "Pay card" : "Pay bills"
+    }
+
+    private var displayBalance: Decimal {
+        // Banks show credit card balances as the (positive) amount owed.
+        account.type == .credit ? abs(account.balance) : account.balance
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(account.name.uppercased())
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 10)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(displayBalance.formattedCurrency)
+                    .font(.title.weight(.semibold))
+                Text(subtitle)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+
+            Spacer(minLength: 12)
+
+            Divider()
+
+            HStack(spacing: 14) {
+                Spacer()
+                Text(actionTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(SaveMaxingTheme.brand)
+                Divider()
+                    .frame(height: 16)
+                Image(systemName: "ellipsis")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(SaveMaxingTheme.brand)
+            }
+            .padding(.top, 10)
+        }
+        .padding(16)
+        .frame(height: Self.cardHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
@@ -216,9 +460,9 @@ private struct MetricPill: View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(.green)
+                .foregroundStyle(SaveMaxingTheme.brand)
                 .frame(width: 24, height: 24)
-                .background(.green.opacity(0.12), in: Circle())
+                .background(SaveMaxingTheme.accentSoft, in: Circle())
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -271,7 +515,7 @@ private struct SectionHeader: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
-                .foregroundStyle(.green)
+                .foregroundStyle(SaveMaxingTheme.brand)
             Text(title)
                 .font(.headline.weight(.bold))
             Spacer()
@@ -305,7 +549,7 @@ private struct CategoryRow: View {
                         .font(.subheadline.weight(.semibold))
                     Text(isOverBudget ? "Above usual pace" : "On track")
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(isOverBudget ? .orange : .secondary)
+                        .foregroundStyle(isOverBudget ? SaveMaxingTheme.warning : .secondary)
                 }
 
                 Spacer()
@@ -315,7 +559,7 @@ private struct CategoryRow: View {
             }
 
             ProgressView(value: progress)
-                .tint(isOverBudget ? .orange : .green)
+                .tint(isOverBudget ? SaveMaxingTheme.warning : SaveMaxingTheme.accent)
         }
         .padding(14)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -344,8 +588,12 @@ private struct TransactionRow: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 3) {
-                Text(transaction.amount.formattedCurrency)
+                // A negative amount is a deposit/income; show it green with a +.
+                Text(isDeposit
+                     ? "+\((-transaction.amount).formattedCurrency)"
+                     : transaction.amount.formattedCurrency)
                     .font(.subheadline.weight(.bold))
+                    .foregroundStyle(isDeposit ? SaveMaxingTheme.success : .primary)
                 Text(transaction.date, format: .dateTime.month(.abbreviated).day())
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
@@ -353,6 +601,10 @@ private struct TransactionRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private var isDeposit: Bool {
+        transaction.amount < 0
     }
 }
 
@@ -372,14 +624,14 @@ extension SpendingCategory.Kind {
 
     var tint: Color {
         switch self {
-        case .dining: .orange
-        case .shopping: .pink
-        case .transportation: .blue
-        case .entertainment: .purple
-        case .groceries: .green
-        case .subscriptions: .indigo
-        case .income: .mint
-        case .savings: .teal
+        case .dining: Color(red: 0.76, green: 0.43, blue: 0.16)
+        case .shopping: Color(red: 0.48, green: 0.30, blue: 0.62)
+        case .transportation: SaveMaxingTheme.info
+        case .entertainment: Color(red: 0.46, green: 0.34, blue: 0.72)
+        case .groceries: SaveMaxingTheme.success
+        case .subscriptions: Color(red: 0.30, green: 0.38, blue: 0.62)
+        case .income: SaveMaxingTheme.accent
+        case .savings: SaveMaxingTheme.brand
         }
     }
 }
@@ -387,10 +639,10 @@ extension SpendingCategory.Kind {
 extension GoalHealth {
     var tint: Color {
         switch self {
-        case .onTrack: .green
-        case .gettingClose: .orange
-        case .atRisk: .red
-        case .completed: .blue
+        case .onTrack: SaveMaxingTheme.success
+        case .gettingClose: SaveMaxingTheme.warning
+        case .atRisk: SaveMaxingTheme.danger
+        case .completed: SaveMaxingTheme.info
         }
     }
 
@@ -405,5 +657,5 @@ extension GoalHealth {
 }
 
 #Preview {
-    DashboardView(appModel: AppViewModel(), isAdvisorPresented: .constant(false))
+    DashboardView(appModel: AppViewModel(), isAdvisorPresented: .constant(false), selectedTab: .constant(0))
 }

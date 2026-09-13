@@ -55,7 +55,7 @@ struct Subscription: Identifiable, Hashable {
     var nextBillingDate: Date
 }
 
-enum GoalKind: String, CaseIterable, Hashable {
+enum GoalKind: String, CaseIterable, Hashable, Codable {
     case savings = "Savings"
     case spendingLimit = "Spending Limit"
     case habit = "Habit"
@@ -68,7 +68,7 @@ enum GoalHealth: String, Hashable {
     case completed = "Completed"
 }
 
-enum SolanaStakeState: String, CaseIterable, Hashable {
+enum SolanaStakeState: String, CaseIterable, Hashable, Codable {
     case noStake = "No Stake"
     case stakeSelected = "Stake Selected"
     case walletNotConnected = "Wallet Not Connected"
@@ -79,9 +79,36 @@ enum SolanaStakeState: String, CaseIterable, Hashable {
     case goalFailed = "Goal Failed"
     case settlementPending = "Settlement Pending"
     case settled = "Settled"
+    case resolved = "Resolved"
 }
 
-struct SavingsGoal: Identifiable, Hashable {
+enum StakeResolutionOutcome: String, Hashable, Codable {
+    case success
+    case failure
+}
+
+struct SavedWallet: Identifiable, Hashable, Codable {
+    let id: UUID
+    var label: String
+    var address: String
+
+    var shortLabel: String {
+        "\(label) — \(address.shortAddress)"
+    }
+}
+
+struct Charity: Identifiable, Hashable, Codable {
+    let id: String
+    var name: String
+    var walletAddress: String
+
+    static let charities: [Charity] = [
+        Charity(id: "red-cross", name: "Red Cross", walletAddress: "HzRzKakDLg4xS1uAiTC33Ry6DbArZTXbVBVEXgG6x36s"),
+        Charity(id: "st-jude", name: "St. Jude", walletAddress: "8X2gRoetP2ZjnWZ78p4tGPM8Dqq6fMNbLaKrYUSx9tQ9")
+    ]
+}
+
+struct SavingsGoal: Identifiable, Hashable, Codable {
     let id: UUID
     var name: String
     var targetAmount: Decimal
@@ -138,6 +165,30 @@ struct SavingsGoal: Identifiable, Hashable {
             return currentAmount
         }
     }
+
+    /// The goal has been blown: a spending limit went over, or a savings/habit
+    /// goal ran out of days without hitting its target.
+    var isFailed: Bool {
+        guard targetAmount > 0 else { return false }
+        switch kind {
+        case .spendingLimit:
+            return currentAmount >= targetAmount
+        case .savings, .habit:
+            return daysRemaining == 0 && progress < 1
+        }
+    }
+
+    /// The goal was met: a savings/habit goal reached its target, or a spending
+    /// limit reached its deadline while staying under.
+    var isAchieved: Bool {
+        guard targetAmount > 0 else { return false }
+        switch kind {
+        case .spendingLimit:
+            return daysRemaining == 0 && currentAmount < targetAmount
+        case .savings, .habit:
+            return progress >= 1
+        }
+    }
 }
 
 struct PurchaseDecision: Identifiable, Hashable {
@@ -156,8 +207,8 @@ struct PurchaseDecision: Identifiable, Hashable {
     var alternatives: [String]
 }
 
-struct SolanaCommitment: Identifiable, Hashable {
-    enum Mode: String, Hashable {
+struct SolanaCommitment: Identifiable, Hashable, Codable {
+    enum Mode: String, Hashable, Codable {
         case devnet
     }
 
@@ -167,15 +218,29 @@ struct SolanaCommitment: Identifiable, Hashable {
     var mode: Mode
     var state: SolanaStakeState
     var walletAddress: String?
+    var successWallet: String
+    var charityId: String
     var escrowWalletAddress: String
     var transactionSignature: String?
     var settlementSignature: String?
+    var payoutSignature: String?
+    var resolutionOutcome: StakeResolutionOutcome?
     var createdAt: Date
     var confirmedAt: Date?
+    var resolvedAt: Date?
+
+    var amountLamports: Int64 {
+        Int64((NSDecimalNumber(decimal: committedSol).doubleValue * 1_000_000_000).rounded())
+    }
 
     var explorerURL: URL? {
         guard let transactionSignature else { return nil }
         return URL(string: "https://explorer.solana.com/tx/\(transactionSignature)?cluster=devnet")
+    }
+
+    var payoutExplorerURL: URL? {
+        guard let payoutSignature else { return nil }
+        return URL(string: "https://explorer.solana.com/tx/\(payoutSignature)?cluster=devnet")
     }
 
     var shortWalletAddress: String {
@@ -184,6 +249,69 @@ struct SolanaCommitment: Identifiable, Hashable {
 
     var shortTransactionSignature: String {
         transactionSignature?.shortAddress ?? "Pending"
+    }
+
+    init(
+        id: UUID,
+        savingsGoalID: UUID,
+        committedSol: Decimal,
+        mode: Mode,
+        state: SolanaStakeState,
+        walletAddress: String?,
+        successWallet: String,
+        charityId: String,
+        escrowWalletAddress: String,
+        transactionSignature: String?,
+        settlementSignature: String?,
+        payoutSignature: String?,
+        resolutionOutcome: StakeResolutionOutcome?,
+        createdAt: Date,
+        confirmedAt: Date?,
+        resolvedAt: Date?
+    ) {
+        self.id = id
+        self.savingsGoalID = savingsGoalID
+        self.committedSol = committedSol
+        self.mode = mode
+        self.state = state
+        self.walletAddress = walletAddress
+        self.successWallet = successWallet
+        self.charityId = charityId
+        self.escrowWalletAddress = escrowWalletAddress
+        self.transactionSignature = transactionSignature
+        self.settlementSignature = settlementSignature
+        self.payoutSignature = payoutSignature
+        self.resolutionOutcome = resolutionOutcome
+        self.createdAt = createdAt
+        self.confirmedAt = confirmedAt
+        self.resolvedAt = resolvedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, savingsGoalID, committedSol, mode, state, walletAddress
+        case successWallet, charityId, escrowWalletAddress, transactionSignature
+        case settlementSignature, payoutSignature, resolutionOutcome, createdAt
+        case confirmedAt, resolvedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        savingsGoalID = try container.decode(UUID.self, forKey: .savingsGoalID)
+        committedSol = try container.decode(Decimal.self, forKey: .committedSol)
+        mode = try container.decode(Mode.self, forKey: .mode)
+        state = try container.decode(SolanaStakeState.self, forKey: .state)
+        walletAddress = try container.decodeIfPresent(String.self, forKey: .walletAddress)
+        successWallet = try container.decodeIfPresent(String.self, forKey: .successWallet) ?? ""
+        charityId = try container.decodeIfPresent(String.self, forKey: .charityId) ?? "red-cross"
+        escrowWalletAddress = try container.decode(String.self, forKey: .escrowWalletAddress)
+        transactionSignature = try container.decodeIfPresent(String.self, forKey: .transactionSignature)
+        settlementSignature = try container.decodeIfPresent(String.self, forKey: .settlementSignature)
+        payoutSignature = try container.decodeIfPresent(String.self, forKey: .payoutSignature)
+        resolutionOutcome = try container.decodeIfPresent(StakeResolutionOutcome.self, forKey: .resolutionOutcome)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        confirmedAt = try container.decodeIfPresent(Date.self, forKey: .confirmedAt)
+        resolvedAt = try container.decodeIfPresent(Date.self, forKey: .resolvedAt)
     }
 }
 

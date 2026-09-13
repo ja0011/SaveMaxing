@@ -43,7 +43,7 @@ struct SaveMaxingAdvisorSheet: View {
                                         .padding(.horizontal, 10)
                                 }
                                 .buttonStyle(.bordered)
-                                .tint(.green)
+                                .tint(SaveMaxingTheme.brand)
                             }
                         }
 
@@ -119,7 +119,7 @@ private struct AdvisorBubble: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(isUser ? .white : .primary)
                 .padding(14)
-                .background(isUser ? Color.green : Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(isUser ? SaveMaxingTheme.brand : SaveMaxingTheme.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             if !isUser { Spacer(minLength: 40) }
         }

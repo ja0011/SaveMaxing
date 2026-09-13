@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PurchaseDecisionView: View {
     @ObservedObject var appModel: AppViewModel
+    @Binding var selectedTab: Int
 
     @State private var itemName = "Xbox"
     @State private var priceText = "600"
@@ -24,19 +25,23 @@ struct PurchaseDecisionView: View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 18) {
-                    headerCard
-                    inputCard
+                    if appModel.goals.isEmpty {
+                        noGoalCard
+                    } else {
+                        headerCard
+                        inputCard
 
-                    if isAnalyzing {
-                        analyzingCard
-                    }
+                        if isAnalyzing {
+                            analyzingCard
+                        }
 
-                    if let decision {
-                        decisionCard(decision)
-                    }
+                        if let decision {
+                            decisionCard(decision)
+                        }
 
-                    if let protectedAmount {
-                        protectedCard(amount: protectedAmount)
+                        if let protectedAmount {
+                            protectedCard(amount: protectedAmount)
+                        }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -48,6 +53,40 @@ struct PurchaseDecisionView: View {
         }
     }
 
+    /// Shown when there's no active goal — nothing to weigh a purchase against.
+    private var noGoalCard: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "cart.badge.questionmark")
+                .font(.system(size: 36, weight: .bold))
+                .foregroundStyle(SaveMaxingTheme.brand)
+                .frame(width: 68, height: 68)
+                .background(SaveMaxingTheme.accentSoft, in: Circle())
+
+            Text("No goal in mind")
+                .font(.title3.weight(.bold))
+
+            Text("You're not saving for anything right now, so there's nothing to check this purchase against. Create a goal first.")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                selectedTab = 1   // Goals tab
+            } label: {
+                Label("Create a Goal", systemImage: "target")
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(SaveMaxingTheme.brand)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(24)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
     private var headerCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
@@ -55,7 +94,7 @@ struct PurchaseDecisionView: View {
                     .font(.title3.weight(.bold))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
-                    .background(.green, in: Circle())
+                    .background(SaveMaxingTheme.brand, in: Circle())
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Before you spend")
@@ -120,7 +159,7 @@ struct PurchaseDecisionView: View {
                 .frame(height: 52)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.green)
+            .tint(SaveMaxingTheme.brand)
             .disabled(isAnalyzing || itemName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || purchasePrice == nil)
         }
         .padding(18)
@@ -131,16 +170,16 @@ struct PurchaseDecisionView: View {
         HStack(spacing: 12) {
             ProgressView()
             VStack(alignment: .leading, spacing: 4) {
-                Text("Gemini-style analysis")
+                Text("Gemini analysis")
                     .font(.subheadline.weight(.bold))
-                Text("Reviewing your goal, spending pace, subscriptions, and category trends.")
+                Text("Checking this purchase against your active goal and real spending history.")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
             }
             Spacer()
         }
         .padding(16)
-        .background(.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(SaveMaxingTheme.info.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func decisionCard(_ decision: PurchaseDecision) -> some View {
@@ -148,7 +187,7 @@ struct PurchaseDecisionView: View {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.title2.weight(.bold))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(SaveMaxingTheme.warning)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(decision.recommendation.rawValue.uppercased())
@@ -198,7 +237,7 @@ struct PurchaseDecisionView: View {
                         .frame(height: 48)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.green)
+                .tint(SaveMaxingTheme.brand)
             }
         }
         .padding(18)
@@ -209,12 +248,12 @@ struct PurchaseDecisionView: View {
         VStack(spacing: 12) {
             ZStack {
                 Circle()
-                    .fill(.green.opacity(0.14))
+                    .fill(SaveMaxingTheme.accentSoft)
                     .frame(width: 82, height: 82)
                     .scaleEffect(showCelebration ? 1.12 : 0.86)
                 Image(systemName: "target")
                     .font(.system(size: 34, weight: .bold))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(SaveMaxingTheme.brand)
                     .scaleEffect(showCelebration ? 1.0 : 0.76)
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.58), value: showCelebration)
@@ -222,24 +261,15 @@ struct PurchaseDecisionView: View {
             Text("\(amount.formattedCurrency) protected toward your goal")
                 .font(.title3.weight(.bold))
                 .multilineTextAlignment(.center)
-
-            Text("Purchases resisted: \(appModel.savingsImpact.purchasesResisted) • Money protected: \(appModel.savingsImpact.moneyProtected.formattedCurrency)")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
         }
         .padding(20)
         .frame(maxWidth: .infinity)
-        .background(.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(SaveMaxingTheme.cardGradient(tint: SaveMaxingTheme.accent), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var appBackground: some View {
-        LinearGradient(
-            colors: [Color(.systemBackground), Color.green.opacity(0.08), Color(.systemBackground)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .ignoresSafeArea()
+        SaveMaxingTheme.background
+            .ignoresSafeArea()
     }
 
     private func analyzePurchase() async {
@@ -250,7 +280,6 @@ struct PurchaseDecisionView: View {
         isAnalyzing = true
 
         do {
-            try await Task.sleep(for: .milliseconds(550))
             decision = try await appModel.analyzePurchase(itemName: itemName, price: purchasePrice)
         } catch {
             decision = PurchaseDecision(
@@ -301,5 +330,5 @@ private struct MetricPillSmall: View {
 }
 
 #Preview {
-    PurchaseDecisionView(appModel: AppViewModel())
+    PurchaseDecisionView(appModel: AppViewModel(), selectedTab: .constant(2))
 }
