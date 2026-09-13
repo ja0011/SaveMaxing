@@ -66,6 +66,7 @@ enum GoalHealth: String, Hashable {
     case gettingClose = "Getting Close"
     case atRisk = "At Risk"
     case completed = "Completed"
+    case failed = "Failed"
 }
 
 enum SolanaStakeState: String, CaseIterable, Hashable, Codable {
@@ -144,12 +145,13 @@ struct SavingsGoal: Identifiable, Hashable, Codable {
     }
 
     var health: GoalHealth {
-        if progress >= 1 { return .completed }
         if kind == .spendingLimit {
-            if progress >= 0.9 { return .atRisk }
-            if progress >= 0.72 { return .gettingClose }
+            if currentAmount > targetAmount { return .failed }
+            if progress >= 0.7 { return .atRisk }
+            if progress >= 0.35 { return .gettingClose }
             return .onTrack
         }
+        if progress >= 1 { return .completed }
         if progress >= 0.62 { return .onTrack }
         if progress >= 0.45 { return .gettingClose }
         return .atRisk
@@ -172,7 +174,7 @@ struct SavingsGoal: Identifiable, Hashable, Codable {
         guard targetAmount > 0 else { return false }
         switch kind {
         case .spendingLimit:
-            return currentAmount >= targetAmount
+            return currentAmount > targetAmount
         case .savings, .habit:
             return daysRemaining == 0 && progress < 1
         }

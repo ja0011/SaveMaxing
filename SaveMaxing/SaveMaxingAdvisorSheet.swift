@@ -117,9 +117,9 @@ private struct AdvisorBubble: View {
 
             Text(message.text)
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(isUser ? .white : .primary)
+                .foregroundStyle(.primary)
                 .padding(14)
-                .background(isUser ? SaveMaxingTheme.brand : SaveMaxingTheme.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(SaveMaxingTheme.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             if !isUser { Spacer(minLength: 40) }
         }

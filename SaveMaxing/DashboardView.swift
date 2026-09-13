@@ -26,20 +26,12 @@ struct DashboardView: View {
                 .padding(.bottom, 28)
             }
             .background(appBackground)
-            .navigationTitle("Home")
             .task {
                 await appModel.loadAnalytics()
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     userSwitcherMenu
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        isAdvisorPresented = true
-                    } label: {
-                        Label("Advisor", systemImage: "sparkles")
-                    }
                 }
             }
         }
@@ -79,8 +71,8 @@ struct DashboardView: View {
             ForEach(appModel.accounts) { account in
                 NavigationLink {
                     AccountTransactionsView(
-                        account: account,
-                        transactions: combinedTransactions(for: account)
+                        appModel: appModel,
+                        account: account
                     )
                 } label: {
                     AccountCard(account: account)
@@ -94,6 +86,10 @@ struct DashboardView: View {
     /// that account type, newest first, so tapping an account shows everything.
     private func combinedTransactions(for account: Account) -> [Transaction] {
         let own = appModel.transactions.filter { $0.accountName == account.name }
+        if appModel.isJudgeDemoActive {
+            return own.sorted { $0.date > $1.date }
+        }
+
         let history = appModel.plaidTransactions
             .filter { $0.accountKind == account.type }
             .map { $0.asTransaction(accountName: account.name) }
@@ -128,7 +124,7 @@ struct DashboardView: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onTapGesture {
-            selectedTab = 1   // Goals tab
+            selectedTab = 2   // Goals tab
         }
     }
 
@@ -141,10 +137,6 @@ struct DashboardView: View {
                         .foregroundStyle(.secondary)
                     Text(goal.name)
                         .font(.title2.weight(.bold))
-                    Text("At your current pace, you're projected to reach \(goal.projectedAmountAtDeadline.formattedCurrency) by your deadline.")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 12)
@@ -210,7 +202,7 @@ struct DashboardView: View {
         }
         .padding(18)
         .background(
-            LinearGradient(colors: [Color(.secondarySystemBackground), goal.health.tint.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            Color(.secondarySystemBackground),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
     }
@@ -231,7 +223,7 @@ struct DashboardView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Color(.systemBackground).opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var impactStrip: some View {
@@ -324,15 +316,27 @@ struct StakeStatusBanner: View {
 
 /// Full transaction history for a single account, pushed from its card.
 struct AccountTransactionsView: View {
+    @ObservedObject var appModel: AppViewModel
     let account: Account
-    let transactions: [Transaction]
 
     private var sortedTransactions: [Transaction] {
-        transactions.sorted { $0.date > $1.date }
+        let own = appModel.transactions.filter { $0.accountName == account.name }
+        if appModel.isJudgeDemoActive {
+            return own.sorted { $0.date > $1.date }
+        }
+
+        let history = appModel.plaidTransactions
+            .filter { $0.accountKind == account.type }
+            .map { $0.asTransaction(accountName: account.name) }
+        return (own + history).sorted { $0.date > $1.date }
     }
 
     private var displayBalance: Decimal {
-        account.type == .credit ? abs(account.balance) : account.balance
+        currentAccount.type == .credit ? abs(currentAccount.balance) : currentAccount.balance
+    }
+
+    private var currentAccount: Account {
+        appModel.accounts.first { $0.id == account.id || $0.name == account.name } ?? account
     }
 
     var body: some View {
@@ -542,7 +546,7 @@ private struct CategoryRow: View {
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(category.kind.tint)
                     .frame(width: 34, height: 34)
-                    .background(category.kind.tint.opacity(0.14), in: Circle())
+                    .background(Color(.systemBackground).opacity(0.72), in: Circle())
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(category.kind.rawValue)
@@ -575,7 +579,7 @@ private struct TransactionRow: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(transaction.category.tint)
                 .frame(width: 36, height: 36)
-                .background(transaction.category.tint.opacity(0.14), in: Circle())
+                .background(Color(.systemBackground).opacity(0.72), in: Circle())
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(transaction.merchantName)
@@ -641,7 +645,7 @@ extension GoalHealth {
         switch self {
         case .onTrack: SaveMaxingTheme.success
         case .gettingClose: SaveMaxingTheme.warning
-        case .atRisk: SaveMaxingTheme.danger
+        case .atRisk, .failed: SaveMaxingTheme.danger
         case .completed: SaveMaxingTheme.info
         }
     }
@@ -650,12 +654,16 @@ extension GoalHealth {
         switch self {
         case .onTrack: "checkmark.circle.fill"
         case .gettingClose: "exclamationmark.circle.fill"
-        case .atRisk: "xmark.octagon.fill"
+        case .atRisk, .failed: "xmark.octagon.fill"
         case .completed: "party.popper.fill"
         }
     }
 }
 
 #Preview {
-    DashboardView(appModel: AppViewModel(), isAdvisorPresented: .constant(false), selectedTab: .constant(0))
+    DashboardView(
+        appModel: AppViewModel(),
+        isAdvisorPresented: .constant(false),
+        selectedTab: .constant(0)
+    )
 }

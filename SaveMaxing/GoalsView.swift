@@ -14,36 +14,23 @@ struct GoalsView: View {
     @State private var isGeneratingGoal = false
     @State private var goalError: String?
     @State private var showWalletManager = false
+    @FocusState private var isGoalPromptFocused: Bool
 
     var body: some View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 18) {
                     goalsSection
-                    stakeFlowCard
+                    if !appModel.goals.isEmpty {
+                        stakeFlowCard
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
                 .padding(.bottom, 28)
             }
             .background(appBackground)
-            .navigationTitle("Goals")
             .scrollDismissesKeyboard(.interactively)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        isAdvisorPresented = true
-                    } label: {
-                        Label("Advisor", systemImage: "sparkles")
-                    }
-                    .accessibilityLabel("Open SaveMaxing Advisor")
-                }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { hideKeyboard() }
-                        .fontWeight(.bold)
-                }
-            }
             .sheet(isPresented: $showWalletManager) {
                 WalletManagerView(appModel: appModel, selectedAddress: $successWallet)
             }
@@ -63,14 +50,32 @@ struct GoalsView: View {
     /// Describe a goal in plain English; Gemini generates a real goal card.
     private var goalAdvisorCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionTitle(title: "Goal Advisor", systemImage: "sparkles")
+            HStack(spacing: 12) {
+                Image(systemName: "sparkles")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(SaveMaxingTheme.brand)
+                    .frame(width: 38, height: 38)
+                    .background(Color(.systemBackground), in: Circle())
 
-            Text("Describe a goal and AI will create it for you.")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Goal Advisor")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.primary)
+                    Text("Let's create a goal for you.")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+
+            Text("Tell me what you want to save for or spend less on.")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
 
             TextField("e.g. Don't spend $100 this week", text: $goalPrompt, axis: .vertical)
                 .lineLimit(1...3)
+                .focused($isGoalPromptFocused)
                 .padding(14)
                 .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
@@ -101,10 +106,6 @@ struct GoalsView: View {
             }
         }
         .padding(18)
-        .background(
-            SaveMaxingTheme.cardGradient(tint: SaveMaxingTheme.accent),
-            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-        )
     }
 
     private func generateGoal() async {
@@ -115,6 +116,7 @@ struct GoalsView: View {
         do {
             try await appModel.createGoal(fromPrompt: prompt)
             goalPrompt = ""
+            isGoalPromptFocused = false
         } catch {
             goalError = "Couldn't reach the AI advisor. Make sure the backend is running and on the same Wi-Fi."
         }
@@ -189,10 +191,6 @@ struct GoalsView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            goal.id == appModel.activeGoalID ? SaveMaxingTheme.brandLight : SaveMaxingTheme.surface,
-            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-        )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(goal.id == appModel.activeGoalID ? SaveMaxingTheme.brand.opacity(0.36) : Color.clear, lineWidth: 1)
@@ -236,7 +234,6 @@ struct GoalsView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(SaveMaxingTheme.danger.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     /// Shown when the goal is met.
@@ -270,7 +267,6 @@ struct GoalsView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(SaveMaxingTheme.success.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var stakeFlowCard: some View {
@@ -283,13 +279,6 @@ struct GoalsView: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-
-            Label("Devnet Demo - No Real Money", systemImage: "testtube.2")
-                .font(.subheadline.weight(.black))
-                .foregroundStyle(SaveMaxingTheme.info)
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(SaveMaxingTheme.info.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Stake amount")
@@ -413,17 +402,11 @@ struct GoalsView: View {
             }
         }
         .padding(18)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var appBackground: some View {
         SaveMaxingTheme.background
             .ignoresSafeArea()
-    }
-
-    /// Dismisses the keyboard from any focused text field.
-    private func hideKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
 }

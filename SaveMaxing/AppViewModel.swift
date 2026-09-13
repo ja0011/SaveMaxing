@@ -43,6 +43,7 @@ final class AppViewModel: ObservableObject {
     @Published var isDemoThinking = false
     @Published var demoResolveMessage: String?
     private var demoSimTransactions: [Transaction] = []
+    private var demoReplaySnapshot: DemoReplaySnapshot?
 
     var judgeDemoMaxMonth: Int {
         MockFinancialData.demoMonthTransactions.count
@@ -213,15 +214,30 @@ final class AppViewModel: ObservableObject {
 
     func load() async {
         do {
-            availableUsers = try await bankingService.fetchAvailableUsers()
-            user = try await bankingService.fetchUser()
-            accounts = try await bankingService.fetchAccounts()
-            transactions = try await bankingService.fetchRecentTransactions()
-            categories = try await bankingService.fetchSpendingCategories()
-            subscriptions = try await bankingService.fetchSubscriptions()
-            savingsImpact = try await bankingService.fetchSavingsImpact()
+            let fetchedAvailableUsers = try await bankingService.fetchAvailableUsers()
+            let fetchedUser = try await bankingService.fetchUser()
+            let fetchedAccounts = try await bankingService.fetchAccounts()
+            let fetchedTransactions = try await bankingService.fetchRecentTransactions()
+            let fetchedCategories = try await bankingService.fetchSpendingCategories()
+            let fetchedSubscriptions = try await bankingService.fetchSubscriptions()
+            let fetchedSavingsImpact = try await bankingService.fetchSavingsImpact()
+            let fetchedPlaidTransactions = plaidTransactions.isEmpty ? ((try? await financialAPIService.fetchTransactions()) ?? []) : plaidTransactions
+
+            guard !isJudgeDemoActive else { return }
+
+            availableUsers = fetchedAvailableUsers
+            user = fetchedUser
+            accounts = fetchedAccounts
+            transactions = fetchedTransactions
+            categories = fetchedCategories
+            subscriptions = fetchedSubscriptions
+            savingsImpact = fetchedSavingsImpact
+            plaidTransactions = fetchedPlaidTransactions
         } catch {
             // Mock defaults keep the demo available when live services are unavailable.
+        }
+        if !isJudgeDemoActive {
+            demoReplaySnapshot = nil
         }
     }
 
@@ -231,8 +247,9 @@ final class AppViewModel: ObservableObject {
         isJudgeDemoActive = true
         judgeDemoMonth = 0
         accounts = [
-            Account(id: UUID(), name: "360 Checking", type: .checking, balance: 2480.45, institutionName: "Capital One"),
-            Account(id: UUID(), name: "Performance Savings", type: .savings, balance: 2340.00, institutionName: "Capital One")
+            Account(id: UUID(), name: "360 Checking", type: .checking, balance: 0, institutionName: "Capital One"),
+            Account(id: UUID(), name: "Performance Savings", type: .savings, balance: 0, institutionName: "Capital One"),
+            Account(id: UUID(), name: "Quicksilver", type: .credit, balance: 0, institutionName: "Capital One")
         ]
         transactions = []
         categories = []
@@ -334,8 +351,8 @@ final class AppViewModel: ObservableObject {
 
     private func demoAccounts(from transactions: [Transaction]) -> [Account] {
         let startingAccounts = [
-            Account(id: UUID(), name: "360 Checking", type: .checking, balance: 700, institutionName: "Capital One"),
-            Account(id: UUID(), name: "Performance Savings", type: .savings, balance: 825, institutionName: "Capital One"),
+            Account(id: UUID(), name: "360 Checking", type: .checking, balance: 0, institutionName: "Capital One"),
+            Account(id: UUID(), name: "Performance Savings", type: .savings, balance: 0, institutionName: "Capital One"),
             Account(id: UUID(), name: "Quicksilver", type: .credit, balance: 0, institutionName: "Capital One")
         ]
 
@@ -387,14 +404,26 @@ final class AppViewModel: ObservableObject {
 
     // MARK: - Admin Time Machine (date scrubber over a fixed timeline)
 
-    let demoMaxDay = 180
+    var demoMaxDay: Int {
+        Calendar.current.dateComponents([.day], from: Self.demoStartDate, to: Self.demoEndDate).day ?? 347
+    }
     private var demoGoalBaseline: [UUID: (days: Int, current: Decimal)] = [:]
 
+    private struct DemoReplaySnapshot {
+        let accounts: [Account]
+        let transactions: [Transaction]
+        let subscriptions: [Subscription]
+        let savingsImpact: SavingsImpact
+
+        var startDate: Date {
+            transactions.map { Calendar.current.startOfDay(for: $0.date) }.min() ?? AppViewModel.demoStartDate
+        }
+    }
+
     var demoDayLabel: String {
-        if demoDay == 0 { return "Day 0 — the very first day" }
-        if demoDay % 30 == 0 { return "Day \(demoDay) (\(demoDay / 30) month\(demoDay / 30 == 1 ? "" : "s"))" }
-        if demoDay % 7 == 0 { return "Day \(demoDay) (\(demoDay / 7) week\(demoDay / 7 == 1 ? "" : "s"))" }
-        return "Day \(demoDay)"
+        if demoDay == 0 { return "Day 0 — No activity loaded" }
+        let date = Calendar.current.date(byAdding: .day, value: demoDay, to: Self.demoStartDate) ?? Self.demoStartDate
+        return "Day \(demoDay) — \(Self.demoLabelFormatter.string(from: date))"
     }
 
     /// Parses a plain instruction like "next 3 days", "forward 2 weeks",
@@ -413,15 +442,26 @@ final class AppViewModel: ObservableObject {
 
         let backward = lower.contains("back") || lower.contains("rewind") || lower.contains("ago") || lower.contains("previous") || lower.contains("earlier")
         let number = Self.firstInt(in: lower) ?? 1
-        let unit = lower.contains("month") ? 30 : (lower.contains("week") ? 7 : 1)
-        let magnitude = number * unit
-        moveDemo(byDays: backward ? -magnitude : magnitude)
+        if lower.contains("month") {
+            moveDemo(byMonths: backward ? -number : number)
+        } else {
+            let unit = lower.contains("week") ? 7 : 1
+            let magnitude = number * unit
+            moveDemo(byDays: backward ? -magnitude : magnitude)
+        }
 
         demoChatMessages.append(AdvisorMessage(id: UUID(), role: .advisor, text: "Now at \(demoDayLabel). \(transactions.count) transactions, balances and goals updated."))
     }
 
     func moveDemo(byDays delta: Int) {
         setDemoDay(demoDay + delta, enteringDemo: true)
+    }
+
+    func moveDemo(byMonths delta: Int) {
+        let currentDate = Calendar.current.date(byAdding: .day, value: demoDay, to: Self.demoStartDate) ?? Self.demoStartDate
+        let nextDate = Calendar.current.date(byAdding: .month, value: delta, to: currentDate) ?? currentDate
+        let nextDay = Calendar.current.dateComponents([.day], from: Self.demoStartDate, to: nextDate).day ?? demoDay
+        setDemoDay(nextDay, enteringDemo: true)
     }
 
     func resetDemoChat() {
@@ -434,17 +474,28 @@ final class AppViewModel: ObservableObject {
     private func setDemoDay(_ day: Int, enteringDemo: Bool) {
         if enteringDemo && !isJudgeDemoActive {
             isJudgeDemoActive = true
+            demoReplaySnapshot = makeDemoReplaySnapshot()
             demoGoalBaseline = Dictionary(uniqueKeysWithValues: goals.map {
                 ($0.id, (days: $0.daysRemaining, current: $0.currentAmount))
             })
+        } else if enteringDemo && demoReplaySnapshot == nil {
+            demoReplaySnapshot = makeDemoReplaySnapshot()
         }
 
         demoDay = min(max(day, 0), demoMaxDay)
-        let visible = Self.demoTimeline(uptoDay: demoDay)
+        let replayDate = Calendar.current.date(byAdding: .day, value: demoDay, to: Self.demoStartDate) ?? Self.demoStartDate
+        let visible = demoDay == 0
+            ? []
+            : Self.demoLedgerTransactions.filter {
+                Calendar.current.startOfDay(for: $0.date) <= replayDate
+            }
 
         transactions = visible.sorted { $0.date > $1.date }
+        plaidTransactions = []
         accounts = demoAccounts(from: visible)
-        categories = demoCategories(from: visible, months: max(demoDay / 30, 1))
+        categories = visible.isEmpty ? [] : demoCategories(from: visible, months: max(demoMonthIndex(for: replayDate), 1))
+        subscriptions = visible.isEmpty ? [] : demoSubscriptions(for: demoMonthIndex(for: replayDate))
+        savingsImpact = visible.isEmpty ? SavingsImpact(purchasesResisted: 0, moneyProtected: 0) : demoSavingsImpact(for: replayDate)
         topMerchants = demoTopMerchants(from: visible)
         monthlyCashFlow = demoCashFlowByMonth(visible)
         analyticsState = .loaded
@@ -463,6 +514,74 @@ final class AppViewModel: ObservableObject {
         if demoDay >= demoMaxDay {
             Task { await resolveDemoStakesIfNeeded() }
         }
+    }
+
+    private func makeDemoReplaySnapshot() -> DemoReplaySnapshot {
+        DemoReplaySnapshot(
+            accounts: accounts,
+            transactions: normalizedLedgerTransactions(),
+            subscriptions: subscriptions,
+            savingsImpact: savingsImpact
+        )
+    }
+
+    private func normalizedLedgerTransactions() -> [Transaction] {
+        let plaidLedger = plaidTransactions.map { plaid in
+            plaid.asTransaction(accountName: accountName(for: plaid.accountKind, in: accounts))
+        }
+        var seen = Set<UUID>()
+        return (transactions + plaidLedger)
+            .filter { seen.insert($0.id).inserted }
+            .sorted { $0.date > $1.date }
+    }
+
+    private func accountName(for type: Account.AccountType, in accounts: [Account]) -> String {
+        if let exact = accounts.first(where: { $0.type == type })?.name {
+            return exact
+        }
+        if type == .credit, let checking = accounts.first(where: { $0.type == .checking })?.name {
+            return checking
+        }
+        return accounts.first?.name ?? "Account"
+    }
+
+    private func replayAccounts(from baseline: [Account], applying transactions: [Transaction]) -> [Account] {
+        baseline.map { account in
+            let accountTransactions = transactions.filter { $0.accountName == account.name }
+            let balance = accountTransactions.reduce(account.balance) { runningBalance, transaction in
+                runningBalance - transaction.amount
+            }
+            return Account(
+                id: account.id,
+                name: account.name,
+                type: account.type,
+                balance: balance,
+                institutionName: account.institutionName
+            )
+        }
+    }
+
+    private func startingAccounts(from currentAccounts: [Account], allTransactions: [Transaction]) -> [Account] {
+        currentAccounts.map { account in
+            let accountTransactions = allTransactions.filter { $0.accountName == account.name }
+            let startingBalance = accountTransactions.reduce(account.balance) { runningBalance, transaction in
+                runningBalance + transaction.amount
+            }
+            return Account(
+                id: account.id,
+                name: account.name,
+                type: account.type,
+                balance: startingBalance,
+                institutionName: account.institutionName
+            )
+        }
+    }
+
+    private func mergedSubscriptions(base: [Subscription], demo: [Subscription]) -> [Subscription] {
+        var seen = Set<String>()
+        return (base + demo)
+            .filter { seen.insert($0.merchantName.lowercased()).inserted }
+            .sorted { $0.nextBillingDate < $1.nextBillingDate }
     }
 
     private func demoGoalCurrent(goal: SavingsGoal, baseCurrent: Decimal, baseDays: Int, visible: [Transaction]) -> Decimal {
@@ -500,12 +619,38 @@ final class AppViewModel: ObservableObject {
         return digits.first.flatMap { Int($0) }
     }
 
-    // A fixed, deterministic day-by-day timeline. Rebuilding it for any cursor
-    // gives the exact same data, so moving forward and backward is consistent.
-    private static let demoStartDate: Date = {
+    private static var demoLedgerTransactions: [Transaction] {
+        MockFinancialData.demoMonthTransactions.flatMap { $0 }
+    }
+
+    private func demoMonthIndex(for date: Date) -> Int {
+        let monthOffset = Calendar.current.dateComponents([.month], from: Self.demoStartDate, to: date).month ?? 0
+        return min(max(monthOffset + 1, 1), judgeDemoMaxMonth)
+    }
+
+    private func demoSavingsImpact(for date: Date) -> SavingsImpact {
+        let index = min(max(demoMonthIndex(for: date) - 1, 0), MockFinancialData.demoMonthSavingsImpact.count - 1)
+        return MockFinancialData.demoMonthSavingsImpact[index]
+    }
+
+    // The fixed demo ledger begins in October and runs to the current September demo date.
+    nonisolated private static let demoStartDate: Date = {
         var components = DateComponents()
-        components.year = 2026; components.month = 1; components.day = 1
+        components.year = 2025; components.month = 10; components.day = 1
         return Calendar.current.date(from: components) ?? Date()
+    }()
+
+    nonisolated private static let demoEndDate: Date = {
+        var components = DateComponents()
+        components.year = 2026; components.month = 9; components.day = 13
+        return Calendar.current.date(from: components) ?? Date()
+    }()
+
+    private static let demoLabelFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM yyyy"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter
     }()
 
     private struct DemoMerchant {
@@ -528,32 +673,35 @@ final class AppViewModel: ObservableObject {
         DemoMerchant(name: "AMC", kind: .entertainment, base: 22, account: "Quicksilver")
     ]
 
-    private static func demoTimeline(uptoDay: Int) -> [Transaction] {
-        guard uptoDay >= 0 else { return [] }
+    private static func demoTimeline(uptoDay: Int, startingAt startDate: Date = demoStartDate, matching accounts: [Account]? = nil) -> [Transaction] {
+        guard uptoDay > 0 else { return [] }
         var result: [Transaction] = []
+        let checkingName = accounts?.first(where: { $0.type == .checking })?.name ?? "360 Checking"
+        let creditName = accounts?.first(where: { $0.type == .credit })?.name ?? checkingName
 
-        for day in 0...uptoDay {
+        for day in 1...uptoDay {
             var seed = UInt64(bitPattern: Int64(day &* 2_654_435_761 &+ 101))
             func rnd() -> Double {
                 seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
                 return Double(seed >> 11) / Double(UInt64(1) << 53)
             }
-            let date = Calendar.current.date(byAdding: .day, value: day, to: demoStartDate) ?? demoStartDate
+            let date = Calendar.current.date(byAdding: .day, value: day, to: startDate) ?? startDate
 
             // Biweekly paycheck.
             if day > 0 && day % 14 == 0 {
-                result.append(Transaction(id: demoID(day, 90), merchantName: "Payroll", amount: -1400, date: date, category: .income, accountName: "360 Checking"))
+                result.append(Transaction(id: demoID(day, 90), merchantName: "Payroll", amount: -1400, date: date, category: .income, accountName: checkingName))
             }
             // Monthly rent.
             if day % 30 == 3 {
-                result.append(Transaction(id: demoID(day, 91), merchantName: "Greystar Apartments", amount: 1650, date: date, category: .subscriptions, accountName: "360 Checking"))
+                result.append(Transaction(id: demoID(day, 91), merchantName: "Greystar Apartments", amount: 1650, date: date, category: .subscriptions, accountName: checkingName))
             }
             // 1-3 everyday purchases.
             let count = Int(rnd() * 3) + 1
             for i in 0..<count {
                 let merchant = demoMerchants[Int(rnd() * Double(demoMerchants.count)) % demoMerchants.count]
                 let amount = (merchant.base * (0.6 + rnd() * 0.9) * 100).rounded() / 100
-                result.append(Transaction(id: demoID(day, i), merchantName: merchant.name, amount: Decimal(amount), date: date, category: merchant.kind, accountName: merchant.account))
+                let accountName = merchant.account == "Quicksilver" ? creditName : checkingName
+                result.append(Transaction(id: demoID(day, i), merchantName: merchant.name, amount: Decimal(amount), date: date, category: merchant.kind, accountName: accountName))
             }
         }
         return result
@@ -605,32 +753,42 @@ final class AppViewModel: ObservableObject {
 
     func analyzePurchase(itemName: String, price: Decimal) async throws -> PurchaseDecision {
         let goal = activeGoal
-        let advice = try await financialAPIService.analyzePurchase(
-            item: itemName,
-            price: NSDecimalNumber(decimal: price).doubleValue,
-            goalName: goal.name,
-            goalTarget: NSDecimalNumber(decimal: goal.targetAmount).doubleValue,
-            goalRemaining: NSDecimalNumber(decimal: goal.amountRemaining).doubleValue,
-            goalDays: goal.daysRemaining,
-            goalKind: goal.kind.rawValue
-        )
+        do {
+            let advice = try await financialAPIService.analyzePurchase(
+                item: itemName,
+                price: NSDecimalNumber(decimal: price).doubleValue,
+                goalName: goal.name,
+                goalTarget: NSDecimalNumber(decimal: goal.targetAmount).doubleValue,
+                goalRemaining: NSDecimalNumber(decimal: goal.amountRemaining).doubleValue,
+                goalDays: goal.daysRemaining,
+                goalKind: goal.kind.rawValue
+            )
 
-        let recommendation: PurchaseDecision.Recommendation
-        switch advice.recommendation.lowercased() {
-        case "approve": recommendation = .approve
-        case "decline": recommendation = .decline
-        default: recommendation = .caution
+            let recommendation: PurchaseDecision.Recommendation
+            switch advice.recommendation.lowercased() {
+            case "approve": recommendation = .approve
+            case "decline": recommendation = .decline
+            default: recommendation = .caution
+            }
+
+            return PurchaseDecision(
+                id: UUID(),
+                itemName: itemName,
+                price: price,
+                recommendation: recommendation,
+                summary: advice.summary,
+                reasons: advice.reasons,
+                alternatives: advice.alternatives
+            )
+        } catch {
+            return try await geminiService.analyzePurchase(
+                itemName: itemName,
+                price: price,
+                goal: goal,
+                categories: categories,
+                subscriptions: subscriptions
+            )
         }
-
-        return PurchaseDecision(
-            id: UUID(),
-            itemName: itemName,
-            price: price,
-            recommendation: recommendation,
-            summary: advice.summary,
-            reasons: advice.reasons,
-            alternatives: advice.alternatives
-        )
     }
 
     func askAdvisor(_ question: String) async {

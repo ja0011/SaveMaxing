@@ -7,35 +7,33 @@ struct ContentView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            DashboardView(appModel: appModel, isAdvisorPresented: $isAdvisorPresented, selectedTab: $selectedTab)
+            DashboardView(
+                appModel: appModel,
+                isAdvisorPresented: $isAdvisorPresented,
+                selectedTab: $selectedTab
+            )
                 .tabItem {
                     Label("Home", systemImage: "house.fill")
                 }
                 .tag(0)
 
-            GoalsView(appModel: appModel, isAdvisorPresented: $isAdvisorPresented)
-                .tabItem {
-                    Label("Goals", systemImage: "target")
-                }
-                .tag(1)
-
-            PurchaseDecisionView(appModel: appModel, selectedTab: $selectedTab)
-                .tabItem {
-                    Label("Buy It", systemImage: "cart.badge.questionmark")
-                }
-                .tag(2)
-
             InsightsView(appModel: appModel)
                 .tabItem {
                     Label("Insights", systemImage: "chart.bar.xaxis")
                 }
-                .tag(3)
+                .tag(1)
+
+            GoalsView(appModel: appModel, isAdvisorPresented: $isAdvisorPresented)
+                .tabItem {
+                    Label("Goals", systemImage: "target")
+                }
+                .tag(2)
 
             AdminDemoView(appModel: appModel, selectedTab: $selectedTab)
                 .tabItem {
                     Label("Admin", systemImage: "slider.horizontal.3")
                 }
-                .tag(4)
+                .tag(3)
         }
         .tint(Color(red: 0.04, green: 0.28, blue: 0.30))
         .sheet(isPresented: $isAdvisorPresented) {
@@ -64,7 +62,7 @@ struct AdminDemoView: View {
                     .foregroundStyle(brand)
                     .frame(maxWidth: .infinity)
                     .padding(10)
-                    .background(brand.opacity(0.10))
+                    .background(Color(.secondarySystemBackground))
 
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -166,7 +164,7 @@ struct AdminDemoView: View {
                             .font(.caption.weight(.semibold))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(brand.opacity(0.12), in: Capsule())
+                            .background(Color(.secondarySystemBackground), in: Capsule())
                             .foregroundStyle(brand)
                     }
                     .disabled(appModel.isDemoThinking)
@@ -183,10 +181,10 @@ struct AdminDemoView: View {
                 .font(.subheadline)
                 .padding(12)
                 .background(
-                    message.role == .user ? brand : Color(.secondarySystemBackground),
+                    Color(.secondarySystemBackground),
                     in: RoundedRectangle(cornerRadius: 14, style: .continuous)
                 )
-                .foregroundStyle(message.role == .user ? .white : .primary)
+                .foregroundStyle(.primary)
             if message.role == .advisor { Spacer(minLength: 40) }
         }
     }

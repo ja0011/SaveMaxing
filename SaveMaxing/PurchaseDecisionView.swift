@@ -49,7 +49,6 @@ struct PurchaseDecisionView: View {
                 .padding(.bottom, 28)
             }
             .background(appBackground)
-            .navigationTitle("Should I Buy It?")
         }
     }
 
@@ -72,7 +71,7 @@ struct PurchaseDecisionView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             Button {
-                selectedTab = 1   // Goals tab
+                selectedTab = 2   // Goals tab
             } label: {
                 Label("Create a Goal", systemImage: "target")
                     .fontWeight(.bold)
@@ -92,9 +91,9 @@ struct PurchaseDecisionView: View {
             HStack(spacing: 12) {
                 Image(systemName: "sparkles")
                     .font(.title3.weight(.bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(SaveMaxingTheme.brand)
                     .frame(width: 44, height: 44)
-                    .background(SaveMaxingTheme.brand, in: Circle())
+                    .background(Color(.systemBackground), in: Circle())
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Before you spend")
@@ -179,7 +178,7 @@ struct PurchaseDecisionView: View {
             Spacer()
         }
         .padding(16)
-        .background(SaveMaxingTheme.info.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func decisionCard(_ decision: PurchaseDecision) -> some View {
